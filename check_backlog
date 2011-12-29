@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+
+# vim: ts=8:sts=3						  
+###################################################################
+# Filename     : check_backlog	    		   		  #
+# Description  : Nagios Plugin that reports the number of files   #
+#	         and the oldest file in hours of a directory.	  #
+# Version      : 0.1						  #
+###################################################################
+
+# Nagios exit codes
+E_OK=0
+E_WARN=1
+E_CRIT=2
+E_UNKN=3
+
+BC=/usr/bin/bc
+LS=/bin/ls
+CUT=/usr/bin/cut
+AWK=/usr/bin/awk
+EXPR=/usr/bin/expr
+DATE=/bin/date
+
+EXIT_CODE=${E_OK}
+
+#
+# Usage function
+#
+
+usage() {
+   echo "$0: Prints the number of files and backlog for a directory."
+   echo "Usage: $0 <directory> <file-ext>"
+   echo "The files that are being checked are *.<file-ext>"
+   exit ${E_UNKN}
+}
+
+#
+# Processes the given directory.
+# Finds the total number of files in a directory and reports the oldest one
+#
+
+process_directory() {
+   directory=$1
+   extension=$2
+
+   # 'backlog_data' contains two fields - number of files and oldest file
+   backlog_data=$( ${LS} -1t ${directory}/*.${extension} | ${AWK} 'END { print NR " " $NF }' )
+
+   # get the number of backlog files
+   backlog_files=$( echo ${backlog_data} | ${CUT} -d ' ' -f 1 )
+
+   # get the oldest filename
+   backlog_oldest=$( echo ${backlog_data} | ${CUT} -d ' ' -f 2 )
+
+   # oldest file in UNIX epoch time
+   oldest_mtime=$( ${DATE} -r ${backlog_oldest} +%s )
+
+   # current date in UNIX epoch time
+   current_date=$( ${DATE} +%s )
+
+   # hours of backlog remaining
+   backlog_hours=$( echo "scale=2; (${current_date} - ${oldest_mtime}) / 3600" | ${BC} -l )
+
+   # Warning state when 1h < backlog_hours <= 6h
+   [ $( echo "( ${backlog_hours} > 1.00) && (${backlog_hours} <= 6.00)" | ${BC} ) -eq 1 ] && EXIT_CODE=${E_WARN}
+
+   # Critical state when backlog_hours > 6h
+   [ $( echo "${backlog_hours} > 6.0" | ${BC} ) -eq 1 ] && EXIT_CODE=${E_CRIT}
+}
+
+#
+# Reports the results 
+#
+
+report_results() {
+   echo "Number of files in directory: ${backlog_files}.\nHours of backlog: ${backlog_hours}"
+}
+
+# 
+# main
+#
+
+[ "$#" -ne 2 ] && usage
+
+process_directory $1 $2
+report_results
+
+exit ${EXIT_CODE}
+
